@@ -34,6 +34,13 @@ class ModelGeneratorTest < Rails::Generators::TestCase
     assert_no_migration "db/migrate/create_accounts.rb"
   end
 
+  def test_plural_names_are_singularized
+    content = run_generator ["accounts".freeze]
+    assert_file "app/models/account.rb", /class Account < ActiveRecord::Base/
+    assert_file "test/models/account_test.rb", /class AccountTest/
+    assert_match(/\[WARNING\] The model name 'accounts' was recognized as a plural, using the singular 'account' instead\. Override with --force-plural or setup custom inflection rules for this noun before running the generator\./, content)
+  end
+
   def test_model_with_underscored_parent_option
     run_generator ["account", "--parent", "admin/account"]
     assert_file "app/models/account.rb", /class Account < Admin::Account/
@@ -264,23 +271,40 @@ class ModelGeneratorTest < Rails::Generators::TestCase
     error = capture(:stderr) { run_generator ["Account", "--force"] }
     assert_no_match(/Another migration is already named create_accounts/, error)
     assert_no_file old_migration
-    assert_migration 'db/migrate/create_accounts.rb'
+    assert_migration "db/migrate/create_accounts.rb"
   end
 
   def test_invokes_default_test_framework
     run_generator
     assert_file "test/models/account_test.rb", /class AccountTest < ActiveSupport::TestCase/
+
     assert_file "test/fixtures/accounts.yml", /name: MyString/, /age: 1/
+    assert_generated_fixture("test/fixtures/accounts.yml",
+                             {"one"=>{"name"=>"MyString", "age"=>1}, "two"=>{"name"=>"MyString", "age"=>1}})
   end
 
   def test_fixtures_use_the_references_ids
     run_generator ["LineItem", "product:references", "cart:belongs_to"]
+
     assert_file "test/fixtures/line_items.yml", /product_id: \n  cart_id: /
+    assert_generated_fixture("test/fixtures/line_items.yml",
+                             {"one"=>{"product_id"=>nil, "cart_id"=>nil}, "two"=>{"product_id"=>nil, "cart_id"=>nil}})
   end
 
   def test_fixtures_use_the_references_ids_and_type
     run_generator ["LineItem", "product:references{polymorphic}", "cart:belongs_to"]
+
     assert_file "test/fixtures/line_items.yml", /product_id: \n  product_type: Product\n  cart_id: /
+    assert_generated_fixture("test/fixtures/line_items.yml",
+                             {"one"=>{"product_id"=>nil, "product_type"=>"Product", "cart_id"=>nil},
+                              "two"=>{"product_id"=>nil, "product_type"=>"Product", "cart_id"=>nil}})
+  end
+
+  def test_fixtures_respect_reserved_yml_keywords
+    run_generator ["LineItem", "no:integer", "Off:boolean", "ON:boolean"]
+
+    assert_generated_fixture("test/fixtures/line_items.yml",
+                             {"one"=>{"no"=>1, "Off"=>false, "ON"=>false}, "two"=>{"no"=>1, "Off"=>false, "ON"=>false}})
   end
 
   def test_fixture_is_skipped
@@ -338,4 +362,10 @@ class ModelGeneratorTest < Rails::Generators::TestCase
       end
     end
   end
+
+  private
+    def assert_generated_fixture(path, parsed_contents)
+      fixture_file = File.new File.expand_path(path, destination_root)
+      assert_equal(parsed_contents, YAML.load(fixture_file))
+    end
 end

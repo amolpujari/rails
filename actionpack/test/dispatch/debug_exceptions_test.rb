@@ -29,6 +29,8 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
         raise RuntimeError
       when "/method_not_allowed"
         raise ActionController::MethodNotAllowed
+      when "/unknown_http_method"
+        raise ActionController::UnknownHttpMethod
       when "/not_implemented"
         raise ActionController::NotImplemented
       when "/unprocessable_entity"
@@ -39,14 +41,25 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
         raise ActionController::BadRequest
       when "/missing_keys"
         raise ActionController::UrlGenerationError, "No route matches"
+      when "/parameter_missing"
+        raise ActionController::ParameterMissing, :missing_param_key
       else
         raise "puke!"
       end
     end
   end
 
-  ProductionApp  = ActionDispatch::DebugExceptions.new(Boomer.new(false))
-  DevelopmentApp = ActionDispatch::DebugExceptions.new(Boomer.new(true))
+  def setup
+    app = ActiveSupport::OrderedOptions.new
+    app.config = ActiveSupport::OrderedOptions.new
+    app.config.assets = ActiveSupport::OrderedOptions.new
+    app.config.assets.prefix = '/sprockets'
+    Rails.stubs(:application).returns(app)
+  end
+
+  RoutesApp = Struct.new(:routes).new(SharedTestRoutes)
+  ProductionApp  = ActionDispatch::DebugExceptions.new(Boomer.new(false), RoutesApp)
+  DevelopmentApp = ActionDispatch::DebugExceptions.new(Boomer.new(true), RoutesApp)
 
   test 'skip diagnosis if not showing detailed exceptions' do
     @app = ProductionApp
@@ -78,6 +91,15 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
     assert boomer.closed, "Expected to close the response body"
   end
 
+  test 'displays routes in a table when a RoutingError occurs' do
+    @app = DevelopmentApp
+    get "/pass", {}, {'action_dispatch.show_exceptions' => true}
+    routing_table = body[/route_table.*<.table>/m]
+    assert_match '/:controller(/:action)(.:format)', routing_table
+    assert_match ':controller#:action', routing_table
+    assert_no_match '&lt;|&gt;', routing_table, "there should not be escaped html in the output"
+  end
+
   test "rescue with diagnostics message" do
     @app = DevelopmentApp
 
@@ -93,9 +115,58 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
     assert_response 405
     assert_match(/ActionController::MethodNotAllowed/, body)
 
+    get "/unknown_http_method", {}, {'action_dispatch.show_exceptions' => true}
+    assert_response 405
+    assert_match(/ActionController::UnknownHttpMethod/, body)
+
     get "/bad_request", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 400
     assert_match(/ActionController::BadRequest/, body)
+
+    get "/parameter_missing", {}, {'action_dispatch.show_exceptions' => true}
+    assert_response 400
+    assert_match(/ActionController::ParameterMissing/, body)
+  end
+
+  test "rescue with text error for xhr request" do
+    @app = DevelopmentApp
+    xhr_request_env = {'action_dispatch.show_exceptions' => true, 'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest'}
+
+    get "/", {}, xhr_request_env
+    assert_response 500
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/puke/, body)
+
+    get "/not_found", {}, xhr_request_env
+    assert_response 404
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/#{AbstractController::ActionNotFound.name}/, body)
+
+    get "/method_not_allowed", {}, xhr_request_env
+    assert_response 405
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/ActionController::MethodNotAllowed/, body)
+
+    get "/unknown_http_method", {}, xhr_request_env
+    assert_response 405
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/ActionController::UnknownHttpMethod/, body)
+
+    get "/bad_request", {}, xhr_request_env
+    assert_response 400
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/ActionController::BadRequest/, body)
+
+    get "/parameter_missing", {}, xhr_request_env
+    assert_response 400
+    assert_no_match(/<body>/, body)
+    assert_equal response.content_type, "text/plain"
+    assert_match(/ActionController::ParameterMissing/, body)
   end
 
   test "does not show filtered parameters" do
@@ -135,7 +206,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
       }
     })
     assert_response 500
-    assert_match(/RuntimeError\n    in FeaturedTileController/, body)
+    assert_match(/RuntimeError\n\s+in FeaturedTileController/, body)
   end
 
   test "sets the HTTP charset parameter" do

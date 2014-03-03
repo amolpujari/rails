@@ -7,8 +7,8 @@ module ActiveRecord
         class Type
           def type; end
 
-          def type_cast_for_write(value)
-            value
+          def infinity(options = {})
+            ::Float::INFINITY * (options[:negative] ? -1 : 1)
           end
         end
 
@@ -18,8 +18,27 @@ module ActiveRecord
           end
         end
 
+        class Text < Type
+          def type_cast(value)
+            return if value.nil?
+
+            value.to_s
+          end
+        end
+
+        class Bit < Type
+          def type_cast(value)
+            if String === value
+              ConnectionAdapters::PostgreSQLColumn.string_to_bit value
+            else
+              value
+            end
+          end
+        end
+
         class Bytea < Type
           def type_cast(value)
+            return if value.nil?
             PGconn.unescape_bytea value
           end
         end
@@ -27,12 +46,17 @@ module ActiveRecord
         class Money < Type
           def type_cast(value)
             return if value.nil?
+            return value unless String === value
 
             # Because money output is formatted according to the locale, there are two
             # cases to consider (note the decimal separators):
             #  (1) $12,345,678.12
             #  (2) $12.345.678,12
+            # Negative values are represented as follows:
+            #  (3) -$2.55
+            #  (4) ($2.55)
 
+            value.sub!(/^\((.+)\)$/, '-\1') # (4)
             case value
             when /^-?\D+[\d,]+\.\d{2}$/  # (1)
               value.gsub!(/[^-\d.]/, '')
@@ -63,6 +87,16 @@ module ActiveRecord
           end
         end
 
+        class Point < Type
+          def type_cast(value)
+            if String === value
+              ConnectionAdapters::PostgreSQLColumn.string_to_point value
+            else
+              value
+            end
+          end
+        end
+
         class Array < Type
           attr_reader :subtype
           def initialize(subtype)
@@ -78,11 +112,58 @@ module ActiveRecord
           end
         end
 
+        class Range < Type
+          attr_reader :subtype
+          def initialize(subtype)
+            @subtype = subtype
+          end
+
+          def extract_bounds(value)
+            from, to = value[1..-2].split(',')
+            {
+              from:          (value[1] == ',' || from == '-infinity') ? @subtype.infinity(negative: true) : from,
+              to:            (value[-2] == ',' || to == 'infinity') ? @subtype.infinity : to,
+              exclude_start: (value[0] == '('),
+              exclude_end:   (value[-1] == ')')
+            }
+          end
+
+          def infinity?(value)
+            value.respond_to?(:infinite?) && value.infinite?
+          end
+
+          def type_cast_single(value)
+            infinity?(value) ? value : @subtype.type_cast(value)
+          end
+
+          def type_cast(value)
+            return if value.nil? || value == 'empty'
+            return value if value.is_a?(::Range)
+
+            extracted = extract_bounds(value)
+            from = type_cast_single extracted[:from]
+            to = type_cast_single extracted[:to]
+
+            if !infinity?(from) && extracted[:exclude_start]
+              if from.respond_to?(:succ)
+                from = from.succ
+                ActiveSupport::Deprecation.warn <<-MESSAGE
+Excluding the beginning of a Range is only partialy supported through `#succ`.
+This is not reliable and will be removed in the future.
+                MESSAGE
+              else
+                raise ArgumentError, "The Ruby Range object does not support excluding the beginning of a Range. (unsupported value: '#{value}')"
+              end
+            end
+            ::Range.new(from, to, extracted[:exclude_end])
+          end
+        end
+
         class Integer < Type
           def type_cast(value)
             return if value.nil?
 
-            value.to_i rescue value ? 1 : 0
+            ConnectionAdapters::Column.value_to_integer value
           end
         end
 
@@ -142,13 +223,25 @@ module ActiveRecord
 
             ConnectionAdapters::Column.value_to_decimal value
           end
+
+          def infinity(options = {})
+            BigDecimal.new("Infinity") * (options[:negative] ? -1 : 1)
+          end
         end
 
         class Hstore < Type
+          def type_cast_for_write(value)
+            ConnectionAdapters::PostgreSQLColumn.hstore_to_string value
+          end
+
           def type_cast(value)
             return if value.nil?
 
             ConnectionAdapters::PostgreSQLColumn.string_to_hstore value
+          end
+
+          def accessor
+            ActiveRecord::Store::StringKeyedHashAccessor
           end
         end
 
@@ -161,18 +254,18 @@ module ActiveRecord
         end
 
         class Json < Type
+          def type_cast_for_write(value)
+            ConnectionAdapters::PostgreSQLColumn.json_to_string value
+          end
+
           def type_cast(value)
             return if value.nil?
 
             ConnectionAdapters::PostgreSQLColumn.string_to_json value
           end
-        end
 
-        class IntRange < Type
-          def type_cast(value)
-            return if value.nil?
-
-            ConnectionAdapters::PostgreSQLColumn.string_to_intrange value
+          def accessor
+            ActiveRecord::Store::StringKeyedHashAccessor
           end
         end
 
@@ -187,6 +280,10 @@ module ActiveRecord
 
           def [](oid)
             @mapping[oid]
+          end
+
+          def clear
+            @mapping.clear
           end
 
           def key?(oid)
@@ -209,17 +306,15 @@ module ActiveRecord
           end
         end
 
-        TYPE_MAP = TypeMap.new # :nodoc:
-
-        # When the PG adapter connects, the pg_type table is queried.  The
+        # When the PG adapter connects, the pg_type table is queried. The
         # key of this hash maps to the `typname` column from the table.
-        # TYPE_MAP is then dynamically built with oids as the key and type
+        # type_map is then dynamically built with oids as the key and type
         # objects as values.
         NAMES = Hash.new { |h,k| # :nodoc:
           h[k] = OID::Identity.new
         }
 
-        # Register an OID type named +name+ with a typcasting object in
+        # Register an OID type named +name+ with a typecasting object in
         # +type+.  +name+ should correspond to the `typname` column in
         # the `pg_type` table.
         def self.register_type(name, type)
@@ -242,7 +337,7 @@ module ActiveRecord
         alias_type    'oid',  'int2'
 
         register_type 'numeric', OID::Decimal.new
-        register_type 'text', OID::Identity.new
+        register_type 'text', OID::Text.new
         alias_type 'varchar', 'text'
         alias_type 'char', 'text'
         alias_type 'bpchar', 'text'
@@ -251,34 +346,30 @@ module ActiveRecord
         # FIXME: why are we keeping these types as strings?
         alias_type 'tsvector', 'text'
         alias_type 'interval', 'text'
-        alias_type 'bit',      'text'
-        alias_type 'varbit',   'text'
         alias_type 'macaddr',  'text'
         alias_type 'uuid',     'text'
-
-        # FIXME: I don't think this is correct. We should probably be returning a parsed date,
-        # but the tests pass with a string returned.
-        register_type 'timestamptz', OID::Identity.new
 
         register_type 'money', OID::Money.new
         register_type 'bytea', OID::Bytea.new
         register_type 'bool', OID::Boolean.new
+        register_type 'bit', OID::Bit.new
+        register_type 'varbit', OID::Bit.new
 
         register_type 'float4', OID::Float.new
         alias_type 'float8', 'float4'
 
         register_type 'timestamp', OID::Timestamp.new
+        register_type 'timestamptz', OID::Timestamp.new
         register_type 'date', OID::Date.new
         register_type 'time', OID::Time.new
 
-        register_type 'path', OID::Identity.new
-        register_type 'polygon', OID::Identity.new
-        register_type 'circle', OID::Identity.new
+        register_type 'path', OID::Text.new
+        register_type 'point', OID::Point.new
+        register_type 'polygon', OID::Text.new
+        register_type 'circle', OID::Text.new
         register_type 'hstore', OID::Hstore.new
         register_type 'json', OID::Json.new
-
-        register_type 'int4range', OID::IntRange.new
-        alias_type 'int8range', 'int4range'
+        register_type 'ltree', OID::Text.new
 
         register_type 'cidr', OID::Cidr.new
         alias_type 'inet', 'cidr'

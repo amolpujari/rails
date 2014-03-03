@@ -1,8 +1,8 @@
 class Hash
-  # Return a hash that includes everything but the given keys. This is useful for
+  # Returns a hash that includes everything but the given keys. This is useful for
   # limiting a set of parameters to everything but a few known toggles:
   #
-  #   @person.update_attributes(params[:person].except(:admin))
+  #   @person.update(params[:person].except(:admin))
   def except(*keys)
     dup.except!(*keys)
   end

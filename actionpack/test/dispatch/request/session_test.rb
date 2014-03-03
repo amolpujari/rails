@@ -24,7 +24,7 @@ module ActionDispatch
         s['foo'] = 'bar'
 
         s1 = Session.create(store, env, {})
-        refute_equal s, s1
+        assert_not_equal s, s1
         assert_equal 'bar', s1['foo']
       end
 
@@ -59,6 +59,22 @@ module ActionDispatch
         s['adequate'] = 'awesome'
         s.clear
         assert_equal([], s.values)
+      end
+
+      def test_fetch
+        session = Session.create(store, {}, {})
+
+        session['one'] = '1'
+        assert_equal '1', session.fetch(:one)
+
+        assert_equal '2', session.fetch(:two, '2')
+        assert_nil session.fetch(:two, nil)
+
+        assert_equal 'three', session.fetch(:three) {|el| el.to_s }
+
+        assert_raise KeyError do
+          session.fetch(:three)
+        end
       end
 
       private

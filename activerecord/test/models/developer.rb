@@ -1,11 +1,5 @@
 require 'ostruct'
 
-module DeveloperProjectsAssociationExtension
-  def find_most_recent
-    order("id DESC").first
-  end
-end
-
 module DeveloperProjectsAssociationExtension2
   def find_least_recent
     order("id ASC").first
@@ -42,8 +36,14 @@ class Developer < ActiveRecord::Base
       end
 
   has_and_belongs_to_many :special_projects, :join_table => 'developers_projects', :association_foreign_key => 'project_id'
+  has_and_belongs_to_many :sym_special_projects,
+                          :join_table => :developers_projects,
+                          :association_foreign_key => 'project_id',
+                          :class_name => 'SpecialProject'
 
   has_many :audit_logs
+  has_many :contracts
+  has_many :firms, :through => :contracts, :source => :firm
 
   scope :jamises, -> { where(:name => 'Jamis') }
 
@@ -101,6 +101,15 @@ class DeveloperWithIncludes < ActiveRecord::Base
   default_scope { includes(:audit_logs) }
 end
 
+class DeveloperFilteredOnJoins < ActiveRecord::Base
+  self.table_name = 'developers'
+  has_and_belongs_to_many :projects, -> { order('projects.id') }, :foreign_key => 'developer_id', :join_table => 'developers_projects'
+
+  def self.default_scope
+    joins(:projects).where(:projects => { :name => 'Active Controller' })
+  end
+end
+
 class DeveloperOrderedBySalary < ActiveRecord::Base
   self.table_name = 'developers'
   default_scope { order('salary DESC') }
@@ -156,6 +165,8 @@ class DeveloperCalledJamis < ActiveRecord::Base
 
   default_scope { where(:name => 'Jamis') }
   scope :poor, -> { where('salary < 150000') }
+  scope :david, -> { where name: "David" }
+  scope :david2, -> { unscoped.where name: "David" }
 end
 
 class PoorDeveloperCalledJamis < ActiveRecord::Base

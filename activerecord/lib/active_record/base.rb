@@ -4,7 +4,7 @@ require 'active_support/benchmarkable'
 require 'active_support/dependencies'
 require 'active_support/descendants_tracker'
 require 'active_support/time'
-require 'active_support/core_ext/class/attribute_accessors'
+require 'active_support/core_ext/module/attribute_accessors'
 require 'active_support/core_ext/class/delegating_attributes'
 require 'active_support/core_ext/array/extract_options'
 require 'active_support/core_ext/hash/deep_merge'
@@ -18,6 +18,7 @@ require 'arel'
 require 'active_record/errors'
 require 'active_record/log_subscriber'
 require 'active_record/explain_subscriber'
+require 'active_record/relation/delegation'
 
 module ActiveRecord #:nodoc:
   # = Active Record
@@ -160,14 +161,11 @@ module ActiveRecord #:nodoc:
   #
   # == Dynamic attribute-based finders
   #
-  # Dynamic attribute-based finders are a cleaner way of getting (and/or creating) objects
+  # Dynamic attribute-based finders are a mildly deprecated way of getting (and/or creating) objects
   # by simple queries without turning to SQL. They work by appending the name of an attribute
-  # to <tt>find_by_</tt>, <tt>find_last_by_</tt>, or <tt>find_all_by_</tt> and thus produces finders
-  # like <tt>Person.find_by_user_name</tt>, <tt>Person.find_all_by_last_name</tt>, and
-  # <tt>Payment.find_by_transaction_id</tt>. Instead of writing
-  # <tt>Person.where(user_name: user_name).first</tt>, you just do <tt>Person.find_by_user_name(user_name)</tt>.
-  # And instead of writing <tt>Person.where(last_name: last_name).all</tt>, you just do
-  # <tt>Person.find_all_by_last_name(last_name)</tt>.
+  # to <tt>find_by_</tt> like <tt>Person.find_by_user_name</tt>.
+  # Instead of writing <tt>Person.find_by(user_name: user_name)</tt>, you can use
+  # <tt>Person.find_by_user_name(user_name)</tt>.
   #
   # It's possible to add an exclamation point (!) on the end of the dynamic finders to get them to raise an
   # <tt>ActiveRecord::RecordNotFound</tt> error if they do not return any records,
@@ -175,51 +173,12 @@ module ActiveRecord #:nodoc:
   #
   # It's also possible to use multiple attributes in the same find by separating them with "_and_".
   #
-  #  Person.where(user_name: user_name, password: password).first
+  #  Person.find_by(user_name: user_name, password: password)
   #  Person.find_by_user_name_and_password(user_name, password) # with dynamic finder
   #
   # It's even possible to call these dynamic finder methods on relations and named scopes.
   #
-  #   Payment.order("created_on").find_all_by_amount(50)
-  #   Payment.pending.find_last_by_amount(100)
-  #
-  # The same dynamic finder style can be used to create the object if it doesn't already exist.
-  # This dynamic finder is called with <tt>find_or_create_by_</tt> and will return the object if
-  # it already exists and otherwise creates it, then returns it. Protected attributes won't be set
-  # unless they are given in a block.
-  #
-  #   # No 'Summer' tag exists
-  #   Tag.find_or_create_by_name("Summer") # equal to Tag.create(name: "Summer")
-  #
-  #   # Now the 'Summer' tag does exist
-  #   Tag.find_or_create_by_name("Summer") # equal to Tag.find_by_name("Summer")
-  #
-  #   # Now 'Bob' exist and is an 'admin'
-  #   User.find_or_create_by_name('Bob', age: 40) { |u| u.admin = true }
-  #
-  # Adding an exclamation point (!) on to the end of <tt>find_or_create_by_</tt> will
-  # raise an <tt>ActiveRecord::RecordInvalid</tt> error if the new record is invalid.
-  #
-  # Use the <tt>find_or_initialize_by_</tt> finder if you want to return a new record without
-  # saving it first. Protected attributes won't be set unless they are given in a block.
-  #
-  #   # No 'Winter' tag exists
-  #   winter = Tag.find_or_initialize_by_name("Winter")
-  #   winter.persisted? # false
-  #
-  # To find by a subset of the attributes to be used for instantiating a new object, pass a hash instead of
-  # a list of parameters.
-  #
-  #   Tag.find_or_create_by_name(name: "rails", creator: current_user)
-  #
-  # That will either find an existing tag named "rails", or create a new one while setting the
-  # user that created it.
-  #
-  # Just like <tt>find_by_*</tt>, you can also use <tt>scoped_by_*</tt> to retrieve data. The good thing about
-  # using this feature is that the very first time result is returned using <tt>method_missing</tt> technique
-  # but after that the method is declared on the class. Henceforth <tt>method_missing</tt> will not be hit.
-  #
-  #  User.scoped_by_user_name('David')
+  #   Payment.order("created_on").find_by_amount(50)
   #
   # == Saving arrays, hashes, and other non-mappable objects in text columns
   #
@@ -332,8 +291,12 @@ module ActiveRecord #:nodoc:
     extend Translation
     extend DynamicMatchers
     extend Explain
+    extend Enum
+    extend Delegation::DelegateCache
 
+    include Core
     include Persistence
+    include NoTouching
     include ReadonlyAttributes
     include ModelSchema
     include Inheritance
@@ -358,7 +321,6 @@ module ActiveRecord #:nodoc:
     include Reflection
     include Serialization
     include Store
-    include Core
   end
 
   ActiveSupport.run_load_hooks(:active_record, Base)

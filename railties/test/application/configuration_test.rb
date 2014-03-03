@@ -62,6 +62,7 @@ module ApplicationTests
 
       require "#{app_path}/config/environment"
       ActiveRecord::Migrator.stubs(:needs_migration?).returns(true)
+      ActiveRecord::NullMigration.any_instance.stubs(:mtime).returns(1)
 
       get "/foo"
       assert_equal 500, last_response.status
@@ -158,12 +159,12 @@ module ApplicationTests
       RUBY
 
       require "#{app_path}/config/application"
-      assert AppTemplate::Application.initialize!
+      assert Rails.application.initialize!
     end
 
     test "application is always added to eager_load namespaces" do
       require "#{app_path}/config/application"
-      assert AppTemplate::Application, AppTemplate::Application.config.eager_load_namespaces
+      assert Rails.application, Rails.application.config.eager_load_namespaces
     end
 
     test "the application can be eager loaded even when there are no frameworks" do
@@ -190,6 +191,16 @@ module ApplicationTests
       assert_nothing_raised do
         require "#{app_path}/config/application"
       end
+    end
+
+    test "filter_parameters should be able to set via config.filter_parameters in an initializer" do
+      app_file 'config/initializers/filter_parameters_logging.rb', <<-RUBY
+        Rails.application.config.filter_parameters += [ :password, :foo, 'bar' ]
+      RUBY
+
+      require "#{app_path}/config/environment"
+
+      assert_equal [:password, :foo, 'bar'], Rails.application.env_config['action_dispatch.parameter_filter']
     end
 
     test "config.to_prepare is forwarded to ActionDispatch" do
@@ -239,7 +250,7 @@ module ApplicationTests
 
     test "Use key_generator when secret_key_base is set" do
       make_basic_app do |app|
-        app.config.secret_key_base = 'b3c631c314c0bbca50c1b2843150fe33'
+        app.secrets.secret_key_base = 'b3c631c314c0bbca50c1b2843150fe33'
         app.config.session_store :disabled
       end
 
@@ -255,6 +266,82 @@ module ApplicationTests
       secret = app.key_generator.generate_key('signed cookie')
       verifier = ActiveSupport::MessageVerifier.new(secret)
       assert_equal 'some_value', verifier.verify(last_response.body)
+    end
+
+    test "application verifier can be used in the entire application" do
+      make_basic_app do |app|
+        app.secrets.secret_key_base = 'b3c631c314c0bbca50c1b2843150fe33'
+        app.config.session_store :disabled
+      end
+
+      message = app.message_verifier(:sensitive_value).generate("some_value")
+
+      assert_equal 'some_value', Rails.application.message_verifier(:sensitive_value).verify(message)
+
+      secret = app.key_generator.generate_key('sensitive_value')
+      verifier = ActiveSupport::MessageVerifier.new(secret)
+      assert_equal 'some_value', verifier.verify(message)
+    end
+
+    test "application verifier can build different verifiers" do
+      make_basic_app do |app|
+        app.secrets.secret_key_base = 'b3c631c314c0bbca50c1b2843150fe33'
+        app.config.session_store :disabled
+      end
+
+      default_verifier = app.message_verifier(:sensitive_value)
+      text_verifier = app.message_verifier(:text)
+
+      message = text_verifier.generate('some_value')
+
+      assert_equal 'some_value', text_verifier.verify(message)
+      assert_raises ActiveSupport::MessageVerifier::InvalidSignature do
+        default_verifier.verify(message)
+      end
+
+      assert_equal default_verifier.object_id, app.message_verifier(:sensitive_value).object_id
+      assert_not_equal default_verifier.object_id, text_verifier.object_id
+    end
+
+    test "secrets.secret_key_base is used when config/secrets.yml is present" do
+      app_file 'config/secrets.yml', <<-YAML
+        development:
+          secret_key_base: 3b7cd727ee24e8444053437c36cc66c3
+      YAML
+
+      require "#{app_path}/config/environment"
+      assert_equal '3b7cd727ee24e8444053437c36cc66c3', app.secrets.secret_key_base
+    end
+
+    test "secret_key_base is copied from config to secrets when not set" do
+      remove_file "config/secrets.yml"
+      app_file 'config/initializers/secret_token.rb', <<-RUBY
+        Rails.application.config.secret_key_base = "3b7cd727ee24e8444053437c36cc66c3"
+      RUBY
+
+      require "#{app_path}/config/environment"
+      assert_equal '3b7cd727ee24e8444053437c36cc66c3', app.secrets.secret_key_base
+    end
+
+    test "custom secrets saved in config/secrets.yml are loaded in app secrets" do
+      app_file 'config/secrets.yml', <<-YAML
+        development:
+          secret_key_base: 3b7cd727ee24e8444053437c36cc66c3
+          aws_access_key_id: myamazonaccesskeyid
+          aws_secret_access_key: myamazonsecretaccesskey
+      YAML
+
+      require "#{app_path}/config/environment"
+      assert_equal 'myamazonaccesskeyid', app.secrets.aws_access_key_id
+      assert_equal 'myamazonsecretaccesskey', app.secrets.aws_secret_access_key
+    end
+
+    test "blank config/secrets.yml does not crash the loading process" do
+      app_file 'config/secrets.yml', <<-YAML
+      YAML
+      require "#{app_path}/config/environment"
+
+      assert_nil app.secrets.not_defined
     end
 
     test "protect from forgery is the default in a new app" do
@@ -448,7 +535,7 @@ module ApplicationTests
       require "#{app_path}/config/environment"
       require 'action_view/base'
 
-      assert ActionView::Resolver.caching?
+      assert_equal true, ActionView::Resolver.caching?
     end
 
     test "config.action_view.cache_template_loading without cache_classes default" do
@@ -456,7 +543,7 @@ module ApplicationTests
       require "#{app_path}/config/environment"
       require 'action_view/base'
 
-      assert !ActionView::Resolver.caching?
+      assert_equal false, ActionView::Resolver.caching?
     end
 
     test "config.action_view.cache_template_loading = false" do
@@ -467,7 +554,7 @@ module ApplicationTests
       require "#{app_path}/config/environment"
       require 'action_view/base'
 
-      assert !ActionView::Resolver.caching?
+      assert_equal false, ActionView::Resolver.caching?
     end
 
     test "config.action_view.cache_template_loading = true" do
@@ -478,7 +565,21 @@ module ApplicationTests
       require "#{app_path}/config/environment"
       require 'action_view/base'
 
-      assert ActionView::Resolver.caching?
+      assert_equal true, ActionView::Resolver.caching?
+    end
+
+    test "config.action_view.cache_template_loading with cache_classes in an environment" do
+      build_app(initializers: true)
+      add_to_env_config "development", "config.cache_classes = false"
+
+      # These requires are to emulate an engine loading Action View before the application
+      require 'action_view'
+      require 'action_view/railtie'
+      require 'action_view/base'
+
+      require "#{app_path}/config/environment"
+
+      assert_equal false, ActionView::Resolver.caching?
     end
 
     test "config.action_dispatch.show_exceptions is sent in env" do
@@ -557,6 +658,54 @@ module ApplicationTests
       assert_equal 'permitted', last_response.body
     end
 
+    test "config.action_controller.action_on_unpermitted_parameters = :raise" do
+      app_file 'app/controllers/posts_controller.rb', <<-RUBY
+      class PostsController < ActionController::Base
+        def create
+          render text: params.require(:post).permit(:name)
+        end
+      end
+      RUBY
+
+      add_to_config <<-RUBY
+        routes.prepend do
+          resources :posts
+        end
+        config.action_controller.action_on_unpermitted_parameters = :raise
+      RUBY
+
+      require "#{app_path}/config/environment"
+
+      assert_equal :raise, ActionController::Parameters.action_on_unpermitted_parameters
+
+      post "/posts", {post: {"title" =>"zomg"}}
+      assert_match "We're sorry, but something went wrong", last_response.body
+    end
+
+    test "config.action_controller.action_on_unpermitted_parameters is :log by default on development" do
+      ENV["RAILS_ENV"] = "development"
+
+      require "#{app_path}/config/environment"
+
+      assert_equal :log, ActionController::Parameters.action_on_unpermitted_parameters
+    end
+
+    test "config.action_controller.action_on_unpermitted_parameters is :log by default on test" do
+      ENV["RAILS_ENV"] = "test"
+
+      require "#{app_path}/config/environment"
+
+      assert_equal :log, ActionController::Parameters.action_on_unpermitted_parameters
+    end
+
+    test "config.action_controller.action_on_unpermitted_parameters is false by default on production" do
+      ENV["RAILS_ENV"] = "production"
+
+      require "#{app_path}/config/environment"
+
+      assert_equal false, ActionController::Parameters.action_on_unpermitted_parameters
+    end
+
     test "config.action_dispatch.ignore_accept_header" do
       make_basic_app do |app|
         app.config.action_dispatch.ignore_accept_header = true
@@ -611,6 +760,38 @@ module ApplicationTests
           app.config.session_store :active_record_store
         end
       end
+    end
+
+    test "config.log_level with custom logger" do
+      make_basic_app do |app|
+        app.config.logger = Logger.new(STDOUT)
+        app.config.log_level = :info
+      end
+      assert_equal Logger::INFO, Rails.logger.level
+    end
+
+    test "respond_to? accepts include_private" do
+      make_basic_app
+
+      assert_not Rails.configuration.respond_to?(:method_missing)
+      assert Rails.configuration.respond_to?(:method_missing, true)
+    end
+
+    test "config.active_record.dump_schema_after_migration is false on production" do
+      build_app
+      ENV["RAILS_ENV"] = "production"
+
+      require "#{app_path}/config/environment"
+
+      assert_not ActiveRecord::Base.dump_schema_after_migration
+    end
+
+    test "config.active_record.dump_schema_after_migration is true by default on development" do
+      ENV["RAILS_ENV"] = "development"
+
+      require "#{app_path}/config/environment"
+
+      assert ActiveRecord::Base.dump_schema_after_migration
     end
   end
 end

@@ -1,12 +1,17 @@
 require 'cases/helper'
 require 'models/developer'
+require 'models/topic'
 
 class TimestampTest < ActiveRecord::TestCase
-  def test_load_infinity_and_beyond
-    unless current_adapter?(:PostgreSQLAdapter)
-      return skip("only tested on postgresql")
-    end
+  fixtures :topics
 
+  def test_group_by_date
+    keys = Topic.group("date_trunc('month', created_at)").count.keys
+    assert_operator keys.length, :>, 0
+    keys.each { |k| assert_kind_of Time, k }
+  end
+
+  def test_load_infinity_and_beyond
     d = Developer.find_by_sql("select 'infinity'::timestamp as updated_at")
     assert d.first.updated_at.infinite?, 'timestamp should be infinite'
 
@@ -17,10 +22,6 @@ class TimestampTest < ActiveRecord::TestCase
   end
 
   def test_save_infinity_and_beyond
-    unless current_adapter?(:PostgreSQLAdapter)
-      return skip("only tested on postgresql")
-    end
-
     d = Developer.create!(:name => 'aaron', :updated_at => 1.0 / 0.0)
     assert_equal(1.0 / 0.0, d.updated_at)
 
@@ -76,10 +77,7 @@ class TimestampTest < ActiveRecord::TestCase
   end
 
   def test_bc_timestamp
-    unless current_adapter?(:PostgreSQLAdapter)
-      return skip("only tested on postgresql")
-    end
-    date = Date.new(0) - 1.second
+    date = Date.new(0) - 1.week
     Developer.create!(:name => "aaron", :updated_at => date)
     assert_equal date, Developer.find_by_name("aaron").updated_at
   end
@@ -100,5 +98,4 @@ class TimestampTest < ActiveRecord::TestCase
       end
       result && result.send(option)
     end
-
 end

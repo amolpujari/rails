@@ -1,5 +1,5 @@
 require 'active_support/log_subscriber'
-require 'active_support/buffered_logger'
+require 'active_support/logger'
 require 'active_support/notifications'
 
 module ActiveSupport
@@ -15,7 +15,7 @@ module ActiveSupport
     #     end
     #
     #     def test_basic_query_logging
-    #       Developer.all
+    #       Developer.all.to_a
     #       wait
     #       assert_equal 1, @logger.logged(:debug).size
     #       assert_match(/Developer Load/, @logger.logged(:debug).last)

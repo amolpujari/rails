@@ -1,6 +1,5 @@
 require 'fileutils'
 require 'abstract_unit'
-require 'active_record_unit'
 
 CACHE_DIR = 'test_cache'
 # Don't change '/../temp/' cavalierly or you might hose something you don't want hosed
@@ -21,7 +20,7 @@ class FragmentCachingMetalTest < ActionController::TestCase
     @controller = FragmentCachingMetalTestController.new
     @controller.perform_caching = true
     @controller.cache_store = @store
-    @params = { controller: 'posts', action: 'index'}
+    @params = { controller: 'posts', action: 'index' }
     @request = ActionController::TestRequest.new
     @response = ActionController::TestResponse.new
     @controller.params = @params
@@ -41,7 +40,7 @@ class CachingController < ActionController::Base
 end
 
 class FragmentCachingTestController < CachingController
-  def some_action; end;
+  def some_action; end
 end
 
 class FragmentCachingTest < ActionController::TestCase
@@ -296,17 +295,20 @@ class CacheHelperOutputBufferTest < ActionController::TestCase
   end
 end
 
-class DeprecatedPageCacheExtensionTest < ActiveSupport::TestCase
-  def test_page_cache_extension_binds_default_static_extension
-    deprecation_behavior = ActiveSupport::Deprecation.behavior
-    ActiveSupport::Deprecation.behavior = :silence
-    old_extension = ActionController::Base.default_static_extension
+class ViewCacheDependencyTest < ActionController::TestCase
+  class NoDependenciesController < ActionController::Base
+  end
 
-    ActionController::Base.page_cache_extension = '.rss'
+  class HasDependenciesController < ActionController::Base
+    view_cache_dependency { "trombone" }
+    view_cache_dependency { "flute" }
+  end
 
-    assert_equal '.rss', ActionController::Base.default_static_extension
-  ensure
-    ActiveSupport::Deprecation.behavior = deprecation_behavior
-    ActionController::Base.default_static_extension = old_extension
+  def test_view_cache_dependencies_are_empty_by_default
+    assert NoDependenciesController.new.view_cache_dependencies.empty?
+  end
+
+  def test_view_cache_dependencies_are_listed_in_declaration_order
+    assert_equal %w(trombone flute), HasDependenciesController.new.view_cache_dependencies
   end
 end

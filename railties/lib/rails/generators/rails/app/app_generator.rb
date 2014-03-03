@@ -38,7 +38,7 @@ module Rails
     end
 
     def readme
-      copy_file "README", "README.rdoc"
+      copy_file "README.rdoc", "README.rdoc"
     end
 
     def gemfile
@@ -56,11 +56,19 @@ module Rails
     def app
       directory 'app'
 
+      keep_file  'app/assets/images'
       keep_file  'app/mailers'
       keep_file  'app/models'
 
       keep_file  'app/controllers/concerns'
       keep_file  'app/models/concerns'
+    end
+
+    def bin
+      directory "bin" do |content|
+        "#{shebang}\n" + content
+      end
+      chmod "bin", 0755 & ~File.umask, verbose: false
     end
 
     def config
@@ -70,6 +78,7 @@ module Rails
         template "routes.rb"
         template "application.rb"
         template "environment.rb"
+        template "secrets.yml"
 
         directory "environments"
         directory "initializers"
@@ -83,10 +92,6 @@ module Rails
 
     def db
       directory "db"
-    end
-
-    def doc
-      directory "doc"
     end
 
     def lib
@@ -103,13 +108,6 @@ module Rails
       directory "public", "public", recursive: false
     end
 
-    def script
-      directory "script" do |content|
-        "#{shebang}\n" + content
-      end
-      chmod "script", 0755, verbose: false
-    end
-
     def test
       empty_directory_with_keep_file 'test/fixtures'
       empty_directory_with_keep_file 'test/controllers'
@@ -118,7 +116,6 @@ module Rails
       empty_directory_with_keep_file 'test/helpers'
       empty_directory_with_keep_file 'test/integration'
 
-      template 'test/performance/browsing_test.rb'
       template 'test/test_helper.rb'
     end
 
@@ -133,7 +130,9 @@ module Rails
     end
 
     def vendor_javascripts
-      empty_directory_with_keep_file 'vendor/assets/javascripts'
+      unless options[:skip_javascript]
+        empty_directory_with_keep_file 'vendor/assets/javascripts'
+      end
     end
 
     def vendor_stylesheets
@@ -145,7 +144,7 @@ module Rails
     # We need to store the RAILS_DEV_PATH in a constant, otherwise the path
     # can change in Ruby 1.8.7 when we FileUtils.cd.
     RAILS_DEV_PATH = File.expand_path("../../../../../..", File.dirname(__FILE__))
-    RESERVED_NAMES = %w[application destroy benchmarker profiler plugin runner test]
+    RESERVED_NAMES = %w[application destroy plugin runner test]
 
     class AppGenerator < AppBase # :nodoc:
       add_shared_options_for "application"
@@ -155,15 +154,18 @@ module Rails
                              desc: "Show Rails version number and quit"
 
       def initialize(*args)
-        raise Error, "Options should be given after the application name. For details run: rails --help" if args[0].blank?
-
         super
+
+        unless app_path
+          raise Error, "Application name should be provided in arguments. For details run: rails --help"
+        end
 
         if !options[:skip_active_record] && !DATABASES.include?(options[:database])
           raise Error, "Invalid value for --database option. Supported for preconfiguration are: #{DATABASES.join(", ")}."
         end
       end
 
+      public_task :set_default_accessors!
       public_task :create_root
 
       def create_root_files
@@ -176,6 +178,10 @@ module Rails
 
       def create_app_files
         build(:app)
+      end
+
+      def create_bin_files
+        build(:bin)
       end
 
       def create_config_files
@@ -195,10 +201,6 @@ module Rails
         build(:db)
       end
 
-      def create_doc_files
-        build(:doc)
-      end
-
       def create_lib_files
         build(:lib)
       end
@@ -209,10 +211,6 @@ module Rails
 
       def create_public_files
         build(:public_directory)
-      end
-
-      def create_script_files
-        build(:script)
       end
 
       def create_test_files
@@ -227,11 +225,18 @@ module Rails
         build(:vendor)
       end
 
+      def delete_js_folder_skipping_javascript
+        if options[:skip_javascript]
+          remove_dir 'app/assets/javascripts'
+        end
+      end
+
       def finish_template
         build(:leftovers)
       end
 
       public_task :apply_rails_template, :run_bundle
+      public_task :generate_spring_binstubs
 
     protected
 
@@ -245,7 +250,7 @@ module Rails
       end
 
       def app_name
-        @app_name ||= defined_app_const_base? ? defined_app_name : File.basename(destination_root)
+        @app_name ||= (defined_app_const_base? ? defined_app_name : File.basename(destination_root)).tr('\\', '').tr(". ", "_")
       end
 
       def defined_app_name
@@ -299,6 +304,77 @@ module Rails
       def get_builder_class
         defined?(::AppBuilder) ? ::AppBuilder : Rails::AppBuilder
       end
+    end
+
+    # This class handles preparation of the arguments before the AppGenerator is
+    # called. The class provides version or help information if they were
+    # requested, and also constructs the railsrc file (used for extra configuration
+    # options).
+    #
+    # This class should be called before the AppGenerator is required and started
+    # since it configures and mutates ARGV correctly.
+    class ARGVScrubber # :nodoc
+      def initialize(argv = ARGV)
+        @argv = argv
+      end
+
+      def prepare!
+        handle_version_request!(@argv.first)
+        handle_invalid_command!(@argv.first, @argv) do
+          handle_rails_rc!(@argv.drop(1))
+        end
+      end
+
+      def self.default_rc_file
+        File.expand_path('~/.railsrc')
+      end
+
+      private
+
+        def handle_version_request!(argument)
+          if ['--version', '-v'].include?(argument)
+            require 'rails/version'
+            puts "Rails #{Rails::VERSION::STRING}"
+            exit(0)
+          end
+        end
+
+        def handle_invalid_command!(argument, argv)
+          if argument == "new"
+            yield
+          else
+            ['--help'] + argv.drop(1)
+          end
+        end
+
+        def handle_rails_rc!(argv)
+          if argv.find { |arg| arg == '--no-rc' }
+            argv.reject { |arg| arg == '--no-rc' }
+          else
+            railsrc(argv) { |rc_argv, rc| insert_railsrc_into_argv!(rc_argv, rc) }
+          end
+        end
+
+        def railsrc(argv)
+          if (customrc = argv.index{ |x| x.include?("--rc=") })
+            fname = File.expand_path(argv[customrc].gsub(/--rc=/, ""))
+            yield(argv.take(customrc) + argv.drop(customrc + 1), fname)
+          else
+            yield argv, self.class.default_rc_file
+          end
+        end
+
+        def read_rc_file(railsrc)
+          extra_args = File.readlines(railsrc).flat_map(&:split)
+          puts "Using #{extra_args.join(" ")} from #{railsrc}"
+          extra_args
+        end
+
+        def insert_railsrc_into_argv!(argv, railsrc)
+          return argv unless File.exist?(railsrc)
+          extra_args = read_rc_file railsrc
+          argv.take(1) + extra_args + argv.drop(1)
+        end
     end
   end
 end

@@ -1,8 +1,6 @@
 The Rails Command Line
 ======================
 
-Rails comes with every command line tool you'll need to
-
 After reading this guide, you will know:
 
 * How to create a Rails application.
@@ -26,6 +24,8 @@ There are a few commands that are absolutely critical to your everyday usage of 
 * `rails generate`
 * `rails dbconsole`
 * `rails new app_name`
+
+All commands can run with ```-h or --help``` to list more information.
 
 Let's create a simple Rails application to step through each of these commands in context.
 
@@ -56,20 +56,18 @@ Rails will set you up with what seems like a huge amount of stuff for such a tin
 
 The `rails server` command launches a small web server named WEBrick which comes bundled with Ruby. You'll use this any time you want to access your application through a web browser.
 
-INFO: WEBrick isn't your only option for serving Rails. We'll get to that [later](#server-with-different-backends).
-
 With no further work, `rails server` will run our new shiny Rails app:
 
 ```bash
 $ cd commandsapp
 $ rails server
 => Booting WEBrick
-=> Rails 3.2.3 application starting in development on http://0.0.0.0:3000
+=> Rails 4.0.0 application starting in development on http://0.0.0.0:3000
 => Call with -d to detach
 => Ctrl-C to shutdown server
-[2012-05-28 00:39:41] INFO  WEBrick 1.3.1
-[2012-05-28 00:39:41] INFO  ruby 1.9.2 (2011-02-18) [x86_64-darwin11.2.0]
-[2012-05-28 00:39:41] INFO  WEBrick::HTTPServer#start: pid=69680 port=3000
+[2013-08-07 02:00:01] INFO  WEBrick 1.3.1
+[2013-08-07 02:00:01] INFO  ruby 2.0.0 (2013-06-27) [x86_64-darwin11.2.0]
+[2013-08-07 02:00:01] INFO  WEBrick::HTTPServer#start: pid=69680 port=3000
 ```
 
 With just three commands we whipped up a Rails server listening on port 3000. Go to your browser and open [http://localhost:3000](http://localhost:3000), you will see a basic Rails app running.
@@ -82,7 +80,7 @@ The server can be run on a different port using the `-p` option. The default dev
 $ rails server -e production -p 4000
 ```
 
-The `-b` option binds Rails to the specified ip, by default it is 0.0.0.0. You can run a server as a daemon by passing a `-d` option.
+The `-b` option binds Rails to the specified IP, by default it is 0.0.0.0. You can run a server as a daemon by passing a `-d` option.
 
 ### `rails generate`
 
@@ -201,7 +199,7 @@ Usage:
 
 ...
 
-ActiveRecord options:
+Active Record options:
       [--migration]            # Indicates when to generate migration
                                # Default: true
 
@@ -220,12 +218,13 @@ We will set up a simple resource called "HighScore" that will keep track of our 
 ```bash
 $ rails generate scaffold HighScore game:string score:integer
     invoke  active_record
-    create    db/migrate/20120528060026_create_high_scores.rb
+    create    db/migrate/20130717151933_create_high_scores.rb
     create    app/models/high_score.rb
     invoke    test_unit
     create      test/models/high_score_test.rb
     create      test/fixtures/high_scores.yml
-     route  resources :high_scores
+    invoke  resource_route
+     route    resources :high_scores
     invoke  scaffold_controller
     create    app/controllers/high_scores_controller.rb
     invoke    erb
@@ -241,18 +240,21 @@ $ rails generate scaffold HighScore game:string score:integer
     create      app/helpers/high_scores_helper.rb
     invoke      test_unit
     create        test/helpers/high_scores_helper_test.rb
+    invoke    jbuilder
+    create      app/views/high_scores/index.json.jbuilder
+    create      app/views/high_scores/show.json.jbuilder
     invoke  assets
     invoke    coffee
     create      app/assets/javascripts/high_scores.js.coffee
     invoke    scss
     create      app/assets/stylesheets/high_scores.css.scss
     invoke  scss
-    create    app/assets/stylesheets/scaffolds.css.scss
+   identical    app/assets/stylesheets/scaffolds.css.scss
 ```
 
 The generator checks that there exist the directories for models, controllers, helpers, layouts, functional and unit tests, stylesheets, creates the views, controller, model and database migration for HighScore (creating the `high_scores` table and fields), takes care of the route for the **resource**, and new tests for everything.
 
-The migration requires that we **migrate**, that is, run some Ruby code (living in that `20120528060026_create_high_scores.rb`) to modify the schema of our database. Which database? The sqlite3 database that Rails will create for you when we run the `rake db:migrate` command. We'll talk more about Rake in-depth in a little while.
+The migration requires that we **migrate**, that is, run some Ruby code (living in that `20130717151933_create_high_scores.rb`) to modify the schema of our database. Which database? The sqlite3 database that Rails will create for you when we run the `rake db:migrate` command. We'll talk more about Rake in-depth in a little while.
 
 ```bash
 $ rake db:migrate
@@ -288,7 +290,7 @@ If you wish to test out some code without changing any data, you can do that by 
 
 ```bash
 $ rails console --sandbox
-Loading development environment in sandbox (Rails 3.2.3)
+Loading development environment in sandbox (Rails 4.0.0)
 Any modifications you make will be rolled back on exit
 irb(main):001:0>
 ```
@@ -347,6 +349,9 @@ Rake is Ruby Make, a standalone Ruby utility that replaces the Unix utility 'mak
 
 You can get a list of Rake tasks available to you, which will often depend on your current directory, by typing `rake --tasks`. Each task has a description, and should help you find the thing you need.
 
+To get the full backtrace for running rake task you can pass the option
+```--trace``` to command line, for example ```rake db:create --trace```.
+
 ```bash
 $ rake --tasks
 rake about              # List versions of all Rails frameworks and the environment
@@ -354,12 +359,13 @@ rake assets:clean       # Remove compiled assets
 rake assets:precompile  # Compile all the assets named in config.assets.precompile
 rake db:create          # Create the database from config/database.yml for the current Rails.env
 ...
-rake log:clear          # Truncates all *.log files in log/ to zero bytes
+rake log:clear          # Truncates all *.log files in log/ to zero bytes (specify which logs with LOGS=test,development)
 rake middleware         # Prints out your Rack middleware stack
 ...
 rake tmp:clear          # Clear session, cache, and socket files from tmp/ (narrow w/ tmp:sessions:clear, tmp:cache:clear, tmp:sockets:clear)
 rake tmp:create         # Creates tmp directories for sessions, cache, sockets, and pids
 ```
+INFO: You can also use ```rake -T```  to get the list of tasks.
 
 ### `about`
 
@@ -371,13 +377,14 @@ About your application's environment
 Ruby version              1.9.3 (x86_64-linux)
 RubyGems version          1.3.6
 Rack version              1.3
-Rails version             4.0.0.beta
+Rails version             4.1.0
 JavaScript Runtime        Node.js (V8)
-Active Record version     4.0.0.beta
-Action Pack version       4.0.0.beta
-Action Mailer version     4.0.0.beta
-Active Support version    4.0.0.beta
-Middleware                ActionDispatch::Static, Rack::Lock, Rack::Runtime, Rack::MethodOverride, ActionDispatch::RequestId, Rails::Rack::Logger, ActionDispatch::ShowExceptions, ActionDispatch::DebugExceptions, ActionDispatch::RemoteIp, ActionDispatch::Reloader, ActionDispatch::Callbacks, ActiveRecord::ConnectionAdapters::ConnectionManagement, ActiveRecord::QueryCache, ActionDispatch::Cookies, ActionDispatch::Session::CookieStore, ActionDispatch::Flash, ActionDispatch::ParamsParser, ActionDispatch::Head, Rack::ConditionalGet, Rack::ETag, ActionDispatch::BestStandardsSupport
+Active Record version     4.1.0
+Action Pack version       4.1.0
+Action View version       4.1.0
+Action Mailer version     4.1.0
+Active Support version    4.1.0
+Middleware                Rack::Sendfile, ActionDispatch::Static, Rack::Lock, #<ActiveSupport::Cache::Strategy::LocalCache::Middleware:0x007ffd131a7c88>, Rack::Runtime, Rack::MethodOverride, ActionDispatch::RequestId, Rails::Rack::Logger, ActionDispatch::ShowExceptions, ActionDispatch::DebugExceptions, ActionDispatch::RemoteIp, ActionDispatch::Reloader, ActionDispatch::Callbacks, ActiveRecord::Migration::CheckPending, ActiveRecord::ConnectionAdapters::ConnectionManagement, ActiveRecord::QueryCache, ActionDispatch::Cookies, ActionDispatch::Session::CookieStore, ActionDispatch::Flash, ActionDispatch::ParamsParser, Rack::Head, Rack::ConditionalGet, Rack::ETag
 Application root          /home/foobar/commandsapp
 Environment               development
 Database adapter          sqlite3
@@ -404,7 +411,7 @@ The `doc:` namespace has the tools to generate documentation for your app, API d
 
 ### `notes`
 
-`rake notes` will search through your code for comments beginning with FIXME, OPTIMIZE or TODO. The search is done in files with extension `.builder`, `.rb`, `.erb`, `.haml` and `.slim` for both default and custom annotations.
+`rake notes` will search through your code for comments beginning with FIXME, OPTIMIZE or TODO. The search is done in files with extension `.builder`, `.rb`, `.erb`, `.haml`, `.slim`, `.css`, `.scss`, `.js`, `.coffee`, `.rake`, `.sass` and `.less` for both default and custom annotations.
 
 ```bash
 $ rake notes
@@ -413,7 +420,7 @@ app/controllers/admin/users_controller.rb:
   * [ 20] [TODO] any other way to do this?
   * [132] [FIXME] high priority for next deploy
 
-app/model/school.rb:
+app/models/school.rb:
   * [ 13] [OPTIMIZE] refactor this code to make it faster
   * [ 17] [FIXME]
 ```
@@ -426,7 +433,7 @@ $ rake notes:fixme
 app/controllers/admin/users_controller.rb:
   * [132] high priority for next deploy
 
-app/model/school.rb:
+app/models/school.rb:
   * [ 17]
 ```
 
@@ -435,21 +442,21 @@ You can also use custom annotations in your code and list them using `rake notes
 ```bash
 $ rake notes:custom ANNOTATION=BUG
 (in /home/foobar/commandsapp)
-app/model/post.rb:
+app/models/post.rb:
   * [ 23] Have to fix this one before pushing!
 ```
 
 NOTE. When using specific annotations and custom annotations, the annotation name (FIXME, BUG etc) is not displayed in the output lines.
 
-By default, `rake notes` will look in the `app`, `config`, `lib`, `script` and `test` directories. If you would like to search other directories, you can provide them as a comma separated list in an environment variable `SOURCE_ANNOTATION_DIRECTORIES`.
+By default, `rake notes` will look in the `app`, `config`, `lib`, `bin` and `test` directories. If you would like to search other directories, you can provide them as a comma separated list in an environment variable `SOURCE_ANNOTATION_DIRECTORIES`.
 
 ```bash
-$ export SOURCE_ANNOTATION_DIRECTORIES='rspec,vendor'
+$ export SOURCE_ANNOTATION_DIRECTORIES='spec,vendor'
 $ rake notes
 (in /home/foobar/commandsapp)
-app/model/user.rb:
+app/models/user.rb:
   * [ 35] [FIXME] User should have a subscription at this point
-rspec/model/user_spec.rb:
+spec/models/user_spec.rb:
   * [122] [TODO] Verify the user that has a subscription works
 ```
 
@@ -461,18 +468,19 @@ rspec/model/user_spec.rb:
 
 INFO: A good description of unit testing in Rails is given in [A Guide to Testing Rails Applications](testing.html)
 
-Rails comes with a test suite called `Test::Unit`. Rails owes its stability to the use of tests. The tasks available in the `test:` namespace helps in running the different tests you will hopefully write.
+Rails comes with a test suite called Minitest. Rails owes its stability to the use of tests. The tasks available in the `test:` namespace helps in running the different tests you will hopefully write.
 
 ### `tmp`
 
 The `Rails.root/tmp` directory is, like the *nix /tmp directory, the holding place for temporary files like sessions (if you're using a file store for files), process id files, and cached actions.
 
-The `tmp:` namespaced tasks will help you clear the `Rails.root/tmp` directory:
+The `tmp:` namespaced tasks will help you clear and create the `Rails.root/tmp` directory:
 
 * `rake tmp:cache:clear` clears `tmp/cache`.
 * `rake tmp:sessions:clear` clears `tmp/sessions`.
 * `rake tmp:sockets:clear` clears `tmp/sockets`.
 * `rake tmp:clear` clears all the three: cache, sessions and sockets.
+* `rake tmp:create` creates tmp directories for sessions, cache, sockets, and pids.
 
 ### Miscellaneous
 
@@ -482,7 +490,9 @@ The `tmp:` namespaced tasks will help you clear the `Rails.root/tmp` directory:
 
 ### Custom Rake Tasks
 
-Custom rake tasks have a `.rake` extension and are placed in `Rails.root/lib/tasks`.
+Custom rake tasks have a `.rake` extension and are placed in
+`Rails.root/lib/tasks`. You can create these custom rake tasks with the
+`bin/rails generate task` command.
 
 ```ruby
 desc "I am short, but comprehensive description for my cool task"
@@ -563,14 +573,20 @@ We had to create the **gitapp** directory and initialize an empty git repository
 $ cat config/database.yml
 # PostgreSQL. Versions 8.2 and up are supported.
 #
-# Install the ruby-postgres driver:
-#   gem install ruby-postgres
-# On Mac OS X:
-#   gem install ruby-postgres -- --include=/usr/local/pgsql
+# Install the pg driver:
+#   gem install pg
+# On OS X with Homebrew:
+#   gem install pg -- --with-pg-config=/usr/local/bin/pg_config
+# On OS X with MacPorts:
+#   gem install pg -- --with-pg-config=/opt/local/lib/postgresql84/bin/pg_config
 # On Windows:
-#   gem install ruby-postgres
+#   gem install pg
 #       Choose the win32 build.
 #       Install PostgreSQL and put its /bin directory on your path.
+#
+# Configure Using Gemfile
+# gem 'pg'
+#
 development:
   adapter: postgresql
   encoding: unicode
@@ -585,28 +601,3 @@ development:
 It also generated some lines in our database.yml configuration corresponding to our choice of PostgreSQL for database.
 
 NOTE. The only catch with using the SCM options is that you have to make your application's directory first, then initialize your SCM, then you can run the `rails new` command to generate the basis of your app.
-
-### `server` with Different Backends
-
-Many people have created a large number of different web servers in Ruby, and many of them can be used to run Rails. Since version 2.3, Rails uses Rack to serve its webpages, which means that any webserver that implements a Rack handler can be used. This includes WEBrick, Mongrel, Thin, and Phusion Passenger (to name a few!).
-
-NOTE: For more details on the Rack integration, see [Rails on Rack](rails_on_rack.html).
-
-To use a different server, just install its gem, then use its name for the first parameter to `rails server`:
-
-```bash
-$ sudo gem install mongrel
-Building native extensions.  This could take a while...
-Building native extensions.  This could take a while...
-Successfully installed gem_plugin-0.2.3
-Successfully installed fastthread-1.0.1
-Successfully installed cgi_multipart_eof_fix-2.5.0
-Successfully installed mongrel-1.1.5
-...
-...
-Installing RDoc documentation for mongrel-1.1.5...
-$ rails server mongrel
-=> Booting Mongrel (use 'rails server webrick' to force WEBrick)
-=> Rails 3.1.0 application starting on http://0.0.0.0:3000
-...
-```

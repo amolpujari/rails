@@ -51,7 +51,7 @@ with an id of `results`.
 
 Rails provides quite a bit of built-in support for building web pages with this
 technique. You rarely have to write this code yourself. The rest of this guide
-will show you how Rails can help you write web sites in this manner, but it's
+will show you how Rails can help you write websites in this way, but it's
 all built on top of this fairly simple technique.
 
 Unobtrusive JavaScript
@@ -66,37 +66,38 @@ Here's the simplest way to write JavaScript. You may see it referred to as
 'inline JavaScript':
 
 ```html
-<a href="#" onclick="alert('Hello, world.')">Here</a>
+<a href="#" onclick="this.style.backgroundColor='#990000'">Paint it red</a>
 ```
-
-When clicked, the alert will trigger. Here's the problem: what happens when
-we have lots of JavaScript we want to execute on a click?
+When clicked, the link background will become red. Here's the problem: what
+happens when we have lots of JavaScript we want to execute on a click?
 
 ```html
-<a href="#" onclick="function fib(n){return n<2?n:fib(n-1)+fib(n-2);};alert('fib of 15 is: ' + fib(15) + '.');">Calculate</a>
+<a href="#" onclick="this.style.backgroundColor='#009900';this.style.color='#FFFFFF';">Paint it green</a>
 ```
 
 Awkward, right? We could pull the function definition out of the click handler,
 and turn it into CoffeeScript:
 
 ```coffeescript
-fib = (n) ->
-  (if n < 2 then n else fib(n - 1) + fib(n - 2))
+paintIt = (element, backgroundColor, textColor) ->
+  element.style.backgroundColor = backgroundColor
+  if textColor?
+    element.style.color = textColor
 ```
 
 And then on our page:
 
 ```html
-<a href="#" onclick="alert('fib of 15 is: ' + fib(15) + '.');">Calculate</a>
+<a href="#" onclick="paintIt(this, '#990000')">Paint it red</a>
 ```
 
 That's a little bit better, but what about multiple links that have the same
 effect?
 
 ```html
-<a href="#" onclick="alert('fib of 16 is: ' + fib(16) + '.');">Calculate</a>
-<a href="#" onclick="alert('fib of 17 is: ' + fib(17) + '.');">Calculate</a>
-<a href="#" onclick="alert('fib of 18 is: ' + fib(18) + '.');">Calculate</a>
+<a href="#" onclick="paintIt(this, '#990000')">Paint it red</a>
+<a href="#" onclick="paintIt(this, '#009900', '#FFFFFF')">Paint it green</a>
+<a href="#" onclick="paintIt(this, '#000099', '#FFFFFF')">Paint it blue</a>
 ```
 
 Not very DRY, eh? We can fix this by using events instead. We'll add a `data-*`
@@ -104,19 +105,21 @@ attribute to our link, and then bind a handler to the click event of every link
 that has that attribute:
 
 ```coffeescript
-fib = (n) ->
-  (if n < 2 then n else fib(n - 1) + fib(n - 2))
+paintIt = (element, backgroundColor, textColor) ->
+  element.style.backgroundColor = backgroundColor
+  if textColor?
+    element.style.color = textColor
 
-$(document).ready ->
-  $("a[data-fib]").click (e) ->
-    count = $(this).data("fib")
-    alert "fib of #{count} is: #{fib(count)}."
-
-... later ...
-
-<a href="#" data-fib="15">Calculate</a>
-<a href="#" data-fib="16">Calculate</a>
-<a href="#" data-fib="17">Calculate</a>
+$ ->
+  $("a[data-background-color]").click ->
+    backgroundColor = $(this).data("background-color")
+    textColor = $(this).data("text-color")
+    paintIt(this, backgroundColor, textColor)
+```
+```html
+<a href="#" data-background-color="#990000">Paint it red</a>
+<a href="#" data-background-color="#009900" data-text-color="#FFFFFF">Paint it green</a>
+<a href="#" data-background-color="#000099" data-text-color="#FFFFFF">Paint it blue</a>
 ```
 
 We call this 'unobtrusive' JavaScript because we're no longer mixing our
@@ -166,7 +169,7 @@ This will generate the following HTML:
 </form>
 ```
 
-Note the `data-remote='true'`. Now, the form will be submitted by Ajax rather
+Note the `data-remote="true"`. Now, the form will be submitted by Ajax rather
 than by the browser's normal submit mechanism.
 
 You probably don't want to just sit there with a filled out `<form>`, though.
@@ -177,12 +180,12 @@ bind to the `ajax:success` event. On failure, use `ajax:error`. Check it out:
 $(document).ready ->
   $("#new_post").on("ajax:success", (e, data, status, xhr) ->
     $("#new_post").append xhr.responseText
-  ).bind "ajax:error", (e, xhr, status, error) ->
+  ).on "ajax:error", (e, xhr, status, error) ->
     $("#new_post").append "<p>ERROR</p>"
 ```
 
 Obviously, you'll want to be a bit more sophisticated than that, but it's a
-start.
+start. You can see more about the events [in the jquery-ujs wiki](https://github.com/rails/jquery-ujs/wiki/ajax).
 
 ### form_tag
 
@@ -191,7 +194,17 @@ is very similar to `form_for`. It has a `:remote` option that you can use like
 this:
 
 ```erb
-<%= form_tag('/posts', remote: true) %>
+<%= form_tag('/posts', remote: true) do %>
+  ...
+<% end %>
+```
+
+This will generate the following HTML:
+
+```html
+<form accept-charset="UTF-8" action="/posts" data-remote="true" method="post">
+  ...
+</form>
 ```
 
 Everything else is the same as `form_for`. See its documentation for full
@@ -204,7 +217,7 @@ is a helper that assists with generating links. It has a `:remote` option you
 can use like this:
 
 ```erb
-<%= link_to "first post", @post, remote: true %>
+<%= link_to "a post", @post, remote: true %>
 ```
 
 which generates
@@ -214,20 +227,19 @@ which generates
 ```
 
 You can bind to the same Ajax events as `form_for`. Here's an example. Let's
-assume that we have a resource `/fib/:n` that calculates the `n`th Fibonacci
-number. We would generate some HTML like this:
+assume that we have a list of posts that can be deleted with just one
+click. We would generate some HTML like this:
 
 ```erb
-<%= link_to "Calculate", "/fib/15", remote: true, data: { fib: 15 } %>
+<%= link_to "Delete post", @post, remote: true, method: :delete %>
 ```
 
 and write some CoffeeScript like this:
 
 ```coffeescript
-$(document).ready ->
-  $("a[data-fib]").on "ajax:success", (e, data, status, xhr) ->
-    count = $(this).data("fib")
-    alert "fib of #{count} is: #{data}."
+$ ->
+  $("a[data-remote]").on "ajax:success", (e, data, status, xhr) ->
+    alert "The post was deleted."
 ```
 
 ### button_to
@@ -276,9 +288,7 @@ The index view (`app/views/users/index.html.erb`) contains:
 <b>Users</b>
 
 <ul id="users">
-<% @users.each do |user| %>
-  <%= render user %>
-<% end %>
+<%= render @users %>
 </ul>
 
 <br>
@@ -299,10 +309,10 @@ The `app/views/users/_user.html.erb` partial contains the following:
 The top portion of the index page displays the users. The bottom portion
 provides a form to create a new user.
 
-The bottom form will call the create action on the Users controller. Because
+The bottom form will call the `create` action on the `UsersController`. Because
 the form's remote option is set to true, the request will be posted to the
-users controller as an Ajax request, looking for JavaScript. In order to
-service that request, the create action of your controller would look like
+`UsersController` as an Ajax request, looking for JavaScript. In order to
+serve that request, the `create` action of your controller would look like
 this:
 
 ```ruby
@@ -392,3 +402,4 @@ Here are some helpful links to help you learn even more:
 * [jquery-ujs list of external articles](https://github.com/rails/jquery-ujs/wiki/External-articles)
 * [Rails 3 Remote Links and Forms: A Definitive Guide](http://www.alfajango.com/blog/rails-3-remote-links-and-forms/)
 * [Railscasts: Unobtrusive JavaScript](http://railscasts.com/episodes/205-unobtrusive-javascript)
+* [Railscasts: Turbolinks](http://railscasts.com/episodes/390-turbolinks)

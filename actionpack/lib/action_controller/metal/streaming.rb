@@ -26,7 +26,7 @@ module ActionController #:nodoc:
   #
   #   class PostsController
   #     def index
-  #       @posts = Post.scoped
+  #       @posts = Post.all
   #       render stream: true
   #     end
   #   end
@@ -51,9 +51,9 @@ module ActionController #:nodoc:
   #
   #   def dashboard
   #     # Allow lazy execution of the queries
-  #     @posts = Post.scoped
-  #     @pages = Page.scoped
-  #     @articles = Article.scoped
+  #     @posts = Post.all
+  #     @pages = Page.all
+  #     @articles = Article.all
   #     render stream: true
   #   end
   #
@@ -193,31 +193,29 @@ module ActionController #:nodoc:
   module Streaming
     extend ActiveSupport::Concern
 
-    include AbstractController::Rendering
-
     protected
 
-    # Set proper cache control and transfer encoding when streaming
-    def _process_options(options) #:nodoc:
-      super
-      if options[:stream]
-        if env["HTTP_VERSION"] == "HTTP/1.0"
-          options.delete(:stream)
-        else
-          headers["Cache-Control"] ||= "no-cache"
-          headers["Transfer-Encoding"] = "chunked"
-          headers.delete("Content-Length")
+      # Set proper cache control and transfer encoding when streaming
+      def _process_options(options) #:nodoc:
+        super
+        if options[:stream]
+          if env["HTTP_VERSION"] == "HTTP/1.0"
+            options.delete(:stream)
+          else
+            headers["Cache-Control"] ||= "no-cache"
+            headers["Transfer-Encoding"] = "chunked"
+            headers.delete("Content-Length")
+          end
         end
       end
-    end
 
-    # Call render_body if we are streaming instead of usual +render+.
-    def _render_template(options) #:nodoc:
-      if options.delete(:stream)
-        Rack::Chunked::Body.new view_renderer.render_body(view_context, options)
-      else
-        super
+      # Call render_body if we are streaming instead of usual +render+.
+      def _render_template(options) #:nodoc:
+        if options.delete(:stream)
+          Rack::Chunked::Body.new view_renderer.render_body(view_context, options)
+        else
+          super
+        end
       end
-    end
   end
 end

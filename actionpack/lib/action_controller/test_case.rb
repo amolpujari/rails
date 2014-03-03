@@ -1,6 +1,7 @@
 require 'rack/session/abstract/id'
 require 'active_support/core_ext/object/to_query'
 require 'active_support/core_ext/module/anonymous'
+require 'active_support/core_ext/hash/keys'
 
 module ActionController
   module TemplateAssertions
@@ -15,8 +16,9 @@ module ActionController
       @_partials = Hash.new(0)
       @_templates = Hash.new(0)
       @_layouts = Hash.new(0)
+      @_files = Hash.new(0)
 
-      ActiveSupport::Notifications.subscribe("render_template.action_view") do |name, start, finish, id, payload|
+      ActiveSupport::Notifications.subscribe("render_template.action_view") do |_name, _start, _finish, _id, payload|
         path = payload[:layout]
         if path
           @_layouts[path] += 1
@@ -26,7 +28,7 @@ module ActionController
         end
       end
 
-      ActiveSupport::Notifications.subscribe("!render_template.action_view") do |name, start, finish, id, payload|
+      ActiveSupport::Notifications.subscribe("!render_template.action_view") do |_name, _start, _finish, _id, payload|
         path = payload[:virtual_path]
         next unless path
         partial = path =~ /^.*\/_[^\/]*$/
@@ -37,6 +39,16 @@ module ActionController
         end
 
         @_templates[path] += 1
+      end
+
+      ActiveSupport::Notifications.subscribe("!render_template.action_view") do |_name, _start, _finish, _id, payload|
+        next if payload[:virtual_path] # files don't have virtual path
+
+        path = payload[:identifier]
+        if path
+          @_files[path] += 1
+          @_files[path.split("/").last] += 1
+        end
       end
     end
 
@@ -81,8 +93,7 @@ module ActionController
     #   # assert that the "_customer" partial was rendered with a specific object
     #   assert_template partial: '_customer', locals: { customer: @customer }
     def assert_template(options = {}, message = nil)
-      # Force body to be read in case the
-      # template is being streamed
+      # Force body to be read in case the template is being streamed.
       response.body
 
       case options
@@ -106,7 +117,7 @@ module ActionController
           end
         assert matches_template, msg
       when Hash
-        options.assert_valid_keys(:layout, :partial, :locals, :count)
+        options.assert_valid_keys(:layout, :partial, :locals, :count, :file)
 
         if options.key?(:layout)
           expected_layout = options[:layout]
@@ -123,10 +134,18 @@ module ActionController
           end
         end
 
+        if options[:file]
+          assert_includes @_files.keys, options[:file]
+        end
+
         if expected_partial = options[:partial]
           if expected_locals = options[:locals]
             if defined?(@_rendered_views)
-              view = expected_partial.to_s.sub(/^_/,'')
+              view = expected_partial.to_s.sub(/^_/, '').sub(/\/_(?=[^\/]+\z)/, '/')
+
+              partial_was_not_rendered_msg = "expected %s to be rendered but it was not." % view
+              assert_includes @_rendered_views.rendered_views, view, partial_was_not_rendered_msg
+
               msg = 'expecting %s to be rendered with %s but was with %s' % [expected_partial,
                                                                              expected_locals,
                                                                              @_rendered_views.locals_for(view)]
@@ -194,6 +213,9 @@ module ActionController
       # Clear the combined params hash in case it was already referenced.
       @env.delete("action_dispatch.request.parameters")
 
+      # Clear the filter cache variables so they're not stale
+      @filtered_parameters = @filtered_env = @filtered_path = nil
+
       params = self.request_parameters.dup
       %w(controller action only_path).each do |k|
         params.delete(k)
@@ -236,18 +258,50 @@ module ActionController
     end
   end
 
+  class LiveTestResponse < Live::Response
+    def recycle!
+      @body = nil
+      initialize
+    end
+
+    def body
+      @body ||= super
+    end
+  end
+
+  # Methods #destroy and #load! are overridden to avoid calling methods on the
+  # @store object, which does not exist for the TestSession class.
   class TestSession < Rack::Session::Abstract::SessionHash #:nodoc:
     DEFAULT_OPTIONS = Rack::Session::Abstract::ID::DEFAULT_OPTIONS
 
     def initialize(session = {})
       super(nil, nil)
-      replace(session.stringify_keys)
+      @id = SecureRandom.hex(16)
+      @data = stringify_keys(session)
       @loaded = true
     end
 
     def exists?
       true
     end
+
+    def keys
+      @data.keys
+    end
+
+    def values
+      @data.values
+    end
+
+    def destroy
+      clear
+    end
+
+    private
+
+      def load!
+        @id
+      end
   end
 
   # Superclass for ActionController functional tests. Functional tests allow you to
@@ -276,7 +330,7 @@ module ActionController
   #       assert_response :found
   #
   #       # Assert that the controller really put the book in the database.
-  #       assert_not_nil Book.find_by_title("Love Hina")
+  #       assert_not_nil Book.find_by(title: "Love Hina")
   #     end
   #   end
   #
@@ -360,13 +414,6 @@ module ActionController
   #
   #  assert_redirected_to page_url(title: 'foo')
   class TestCase < ActiveSupport::TestCase
-
-    # Use AC::TestCase for the base class when describing a controller
-    register_spec_type(self) do |desc|
-      Class === desc && desc < ActionController::Metal
-    end
-    register_spec_type(/Controller( ?Test)?\z/i, self)
-
     module Behavior
       extend ActiveSupport::Concern
       include ActionDispatch::TestProcess
@@ -418,39 +465,52 @@ module ActionController
 
       end
 
-      # Executes a request simulating GET HTTP method and set/volley the response
+      # Simulate a GET request with the given parameters.
+      #
+      # - +action+: The controller action to call.
+      # - +parameters+: The HTTP parameters that you want to pass. This may
+      #   be +nil+, a hash, or a string that is appropriately encoded
+      #   (<tt>application/x-www-form-urlencoded</tt> or <tt>multipart/form-data</tt>).
+      # - +session+: A hash of parameters to store in the session. This may be +nil+.
+      # - +flash+: A hash of parameters to store in the flash. This may be +nil+.
+      #
+      # You can also simulate POST, PATCH, PUT, DELETE, HEAD, and OPTIONS requests with
+      # +post+, +patch+, +put+, +delete+, +head+, and +options+.
+      #
+      # Note that the request method is not verified. The different methods are
+      # available to make the tests more expressive.
       def get(action, *args)
         process(action, "GET", *args)
       end
 
-      # Executes a request simulating POST HTTP method and set/volley the response
+      # Simulate a POST request with the given parameters and set/volley the response.
+      # See +get+ for more details.
       def post(action, *args)
         process(action, "POST", *args)
       end
 
-      # Executes a request simulating PATCH HTTP method and set/volley the response
+      # Simulate a PATCH request with the given parameters and set/volley the response.
+      # See +get+ for more details.
       def patch(action, *args)
         process(action, "PATCH", *args)
       end
 
-      # Executes a request simulating PUT HTTP method and set/volley the response
+      # Simulate a PUT request with the given parameters and set/volley the response.
+      # See +get+ for more details.
       def put(action, *args)
         process(action, "PUT", *args)
       end
 
-      # Executes a request simulating DELETE HTTP method and set/volley the response
+      # Simulate a DELETE request with the given parameters and set/volley the response.
+      # See +get+ for more details.
       def delete(action, *args)
         process(action, "DELETE", *args)
       end
 
-      # Executes a request simulating HEAD HTTP method and set/volley the response
+      # Simulate a HEAD request with the given parameters and set/volley the response.
+      # See +get+ for more details.
       def head(action, *args)
         process(action, "HEAD", *args)
-      end
-
-      # Executes a request simulating OPTIONS HTTP method and set/volley the response
-      def options(action, *args)
-        process(action, "OPTIONS", *args)
       end
 
       def xml_http_request(request_method, action, parameters = nil, session = nil, flash = nil)
@@ -478,7 +538,6 @@ module ActionController
 
       def process(action, http_method = 'GET', *args)
         check_required_ivars
-        http_method, args = handle_old_process_api(http_method, args, caller)
 
         if args.first.is_a?(String) && http_method != 'HEAD'
           @request.env['RAW_POST_DATA'] = args.shift
@@ -506,7 +565,7 @@ module ActionController
         parameters ||= {}
         controller_class_name = @controller.class.anonymous? ?
           "anonymous" :
-          @controller.class.name.underscore.sub(/_controller$/, '')
+          @controller.class.controller_path
 
         @request.assign_parameters(@routes, controller_class_name, action.to_s, parameters)
 
@@ -520,6 +579,7 @@ module ActionController
 
         name = @request.parameters[:action]
 
+        @controller.recycle!
         @controller.process(name)
 
         if cookies = @request.env['action_dispatch.cookies']
@@ -534,13 +594,14 @@ module ActionController
       end
 
       def setup_controller_request_and_response
-        @request          = build_request
-        @response         = build_response
-        @response.request = @request
-
         @controller = nil unless defined? @controller
 
+        response_klass = TestResponse
+
         if klass = self.class.controller_class
+          if klass < ActionController::Live
+            response_klass = LiveTestResponse
+          end
           unless @controller
             begin
               @controller = klass.new
@@ -549,6 +610,10 @@ module ActionController
             end
           end
         end
+
+        @request          = build_request
+        @response         = build_response response_klass
+        @response.request = @request
 
         if @controller
           @controller.request = @request
@@ -560,8 +625,8 @@ module ActionController
         TestRequest.new
       end
 
-      def build_response
-        TestResponse.new
+      def build_response(klass)
+        klass.new
       end
 
       included do
@@ -580,17 +645,6 @@ module ActionController
             raise "#{iv_name} is nil: make sure you set it in your test's setup method."
           end
         end
-      end
-
-      def handle_old_process_api(http_method, args, callstack)
-        # 4.0: Remove this method.
-        if http_method.is_a?(Hash)
-          ActiveSupport::Deprecation.warn("TestCase#process now expects the HTTP method as second argument: process(action, http_method, params, session, flash)", callstack)
-          args.unshift(http_method)
-          http_method = args.last.is_a?(String) ? args.last : "GET"
-        end
-
-        [http_method, args]
       end
 
       def build_request_uri(action, parameters)

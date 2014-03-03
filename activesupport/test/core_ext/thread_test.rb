@@ -39,14 +39,14 @@ class ThreadExt < ActiveSupport::TestCase
   end
 
   def test_thread_variable?
-    refute Thread.new { Thread.current.thread_variable?("foo") }.join.value
+    assert_not Thread.new { Thread.current.thread_variable?("foo") }.join.value
     t = Thread.new {
       Thread.current.thread_variable_set("foo", "bar")
     }.join
 
     assert t.thread_variable?("foo")
     assert t.thread_variable?(:foo)
-    refute t.thread_variable?(:bar)
+    assert_not t.thread_variable?(:bar)
   end
 
   def test_thread_variable_strings_and_symbols_are_the_same_key
@@ -63,15 +63,13 @@ class ThreadExt < ActiveSupport::TestCase
     end
   end
 
-  def test_thread_variable_security
-    t = Thread.new { sleep }
-
-    assert_raises(SecurityError) do
-      Thread.new { $SAFE = 4; t.thread_variable_get(:foo) }.join
-    end
-
-    assert_raises(SecurityError) do
-      Thread.new { $SAFE = 4; t.thread_variable_set(:foo, :baz) }.join
+  def test_thread_variable_frozen_after_set
+    t = Thread.new { }.join
+    t.thread_variable_set :foo, "bar"
+    t.freeze
+    assert_raises(RuntimeError) do
+      t.thread_variable_set(:baz, "qux")
     end
   end
+
 end

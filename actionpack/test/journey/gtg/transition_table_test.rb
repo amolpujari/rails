@@ -1,10 +1,10 @@
 require 'abstract_unit'
-require 'json'
+require 'active_support/json/decoding'
 
 module ActionDispatch
   module Journey
     module GTG
-      class TestGeneralizedTable < MiniTest::Unit::TestCase
+      class TestGeneralizedTable < ActiveSupport::TestCase
         def test_to_json
           table = tt %w{
             /articles(.:format)
@@ -13,7 +13,7 @@ module ActionDispatch
             /articles/:id(.:format)
           }
 
-          json = JSON.load table.to_json
+          json = ActiveSupport::JSON.decode table.to_json
           assert json['regexp_states']
           assert json['string_states']
           assert json['accepting']
@@ -29,7 +29,7 @@ module ActionDispatch
             }
             svg = table.to_svg
             assert svg
-            refute_match(/DOCTYPE/, svg)
+            assert_no_match(/DOCTYPE/, svg)
           end
         end
 
@@ -53,7 +53,7 @@ module ActionDispatch
           sim = simulator_for ['/foo(/bar)']
           assert_match sim, '/foo'
           assert_match sim, '/foo/bar'
-          refute_match sim, '/foo/'
+          assert_no_match sim, '/foo/'
         end
 
         def test_match_data

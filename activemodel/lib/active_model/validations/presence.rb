@@ -3,8 +3,8 @@ module ActiveModel
 
   module Validations
     class PresenceValidator < EachValidator # :nodoc:
-      def validate(record)
-        record.errors.add_on_blank(attributes, options)
+      def validate_each(record, attr_name, value)
+        record.errors.add(attr_name, :blank, options) if value.blank?
       end
     end
 
@@ -29,7 +29,7 @@ module ActiveModel
       # * <tt>:message</tt> - A custom error message (default is: "can't be blank").
       #
       # There is also a list of default options supported by every validator:
-      # +:if+, +:unless+, +:on+ and +:strict+.
+      # +:if+, +:unless+, +:on+, +:allow_nil+, +:allow_blank+, and +:strict+.
       # See <tt>ActiveModel::Validation#validates</tt> for more information
       def validates_presence_of(*attr_names)
         validates_with PresenceValidator, _merge_attributes(attr_names)

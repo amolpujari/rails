@@ -1,7 +1,19 @@
 class Post < ActiveRecord::Base
+  class CategoryPost < ActiveRecord::Base
+    self.table_name = "categories_posts"
+    belongs_to :category
+    belongs_to :post
+  end
+
   module NamedExtension
     def author
       'lifo'
+    end
+  end
+
+  module NamedExtension2
+    def greeting
+      "hello"
     end
   end
 
@@ -10,11 +22,7 @@ class Post < ActiveRecord::Base
 
   scope :limit_by, lambda {|l| limit(l) }
 
-  belongs_to :author do
-    def greeting
-      "hello"
-    end
-  end
+  belongs_to :author
 
   belongs_to :author_with_posts, -> { includes(:posts) }, :class_name => "Author", :foreign_key => :author_id
   belongs_to :author_with_address, -> { includes(:author_address) }, :class_name => "Author", :foreign_key => :author_id
@@ -28,6 +36,9 @@ class Post < ActiveRecord::Base
   scope :with_special_comments, -> { joins(:comments).where(:comments => {:type => 'SpecialComment'}) }
   scope :with_very_special_comments, -> { joins(:comments).where(:comments => {:type => 'VerySpecialComment'}) }
   scope :with_post, ->(post_id) { joins(:comments).where(:comments => { :post_id => post_id }) }
+
+  scope :with_comments, -> { preload(:comments) }
+  scope :with_tags, -> { preload(:taggings) }
 
   has_many   :comments do
     def find_most_recent
@@ -43,9 +54,20 @@ class Post < ActiveRecord::Base
     end
   end
 
+  has_many :comments_with_extend, extend: NamedExtension, class_name: "Comment", foreign_key: "post_id" do
+    def greeting
+      "hello"
+    end
+  end
+
+  has_many :comments_with_extend_2, extend: [NamedExtension, NamedExtension2], class_name: "Comment", foreign_key: "post_id"
+
   has_many :author_favorites, :through => :author
   has_many :author_categorizations, :through => :author, :source => :categorizations
   has_many :author_addresses, :through => :author
+  has_many :author_address_extra_with_address,
+    through: :author_with_address,
+    source: :author_address_extra
 
   has_many :comments_with_interpolated_conditions,
     ->(p) { where "#{"#{p.aliased_table_name}." rescue ""}body = ?", 'Thank you for the welcome' },
@@ -59,6 +81,8 @@ class Post < ActiveRecord::Base
   has_many :special_comments_ratings, :through => :special_comments, :source => :ratings
   has_many :special_comments_ratings_taggings, :through => :special_comments_ratings, :source => :taggings
 
+  has_many :category_posts, :class_name => 'CategoryPost'
+  has_many :scategories, through: :category_posts, source: :category
   has_and_belongs_to_many :categories
   has_and_belongs_to_many :special_categories, :join_table => "categories_posts", :association_foreign_key => 'category_id'
 
@@ -109,7 +133,6 @@ class Post < ActiveRecord::Base
   has_many :secure_readers
   has_many :readers_with_person, -> { includes(:person) }, :class_name => "Reader"
   has_many :people, :through => :readers
-  has_many :secure_people, :through => :secure_readers
   has_many :single_people, :through => :readers
   has_many :people_with_callbacks, :source=>:person, :through => :readers,
               :before_add    => lambda {|owner, reader| log(:added,   :before, reader.first_name) },
@@ -151,18 +174,6 @@ class SubStiPost < StiPost
   self.table_name = Post.table_name
 end
 
-ActiveSupport::Deprecation.silence do
-  class DeprecatedPostWithComment < ActiveRecord::Base
-    self.table_name = 'posts'
-    default_scope where("posts.comments_count > 0").order("posts.comments_count ASC")
-  end
-end
-
-class PostForAuthor < ActiveRecord::Base
-  self.table_name = 'posts'
-  cattr_accessor :selected_author
-end
-
 class FirstPost < ActiveRecord::Base
   self.table_name = 'posts'
   default_scope { where(:id => 1) }
@@ -175,6 +186,11 @@ class PostWithDefaultInclude < ActiveRecord::Base
   self.table_name = 'posts'
   default_scope { includes(:comments) }
   has_many :comments, :foreign_key => :post_id
+end
+
+class PostWithSpecialCategorization < Post
+  has_many :categorizations, :foreign_key => :post_id
+  default_scope { where(:type => 'PostWithSpecialCategorization').joins(:categorizations).where(:categorizations => { :special => true }) }
 end
 
 class PostWithDefaultScope < ActiveRecord::Base

@@ -113,7 +113,7 @@ module ActiveRecord
     # other than the writer method.
     #
     # The immutable requirement is enforced by Active Record by freezing any object assigned as a value
-    # object. Attempting to change it afterwards will result in a ActiveSupport::FrozenObjectError.
+    # object. Attempting to change it afterwards will result in a RuntimeError.
     #
     # Read more about value objects on http://c2.com/cgi/wiki?ValueObject and on the dangers of not
     # keeping value objects immutable on http://c2.com/cgi/wiki?ValueObjectsShouldBeImmutable
@@ -165,7 +165,7 @@ module ActiveRecord
     # by specifying an instance of the value object in the conditions hash. The following example
     # finds all customers with +balance_amount+ equal to 20 and +balance_currency+ equal to "USD":
     #
-    #   Customer.where(balance: Money.new(20, "USD")).all
+    #   Customer.where(balance: Money.new(20, "USD"))
     #
     module ClassMethods
       # Adds reader and writer methods for manipulating a value object:
@@ -223,7 +223,8 @@ module ActiveRecord
         reader_method(name, class_name, mapping, allow_nil, constructor)
         writer_method(name, class_name, mapping, allow_nil, converter)
 
-        create_reflection(:composed_of, part_id, nil, options, self)
+        reflection = ActiveRecord::Reflection.create(:composed_of, part_id, nil, options, self)
+        Reflection.add_aggregate_reflection self, part_id, reflection
       end
 
       private

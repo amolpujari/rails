@@ -75,6 +75,11 @@ class DeprecationTest < ActiveSupport::TestCase
     end
   end
 
+  def test_deprecate_object
+    deprecated_object = ActiveSupport::Deprecation::DeprecatedObjectProxy.new(Object.new, ':bomb:')
+    assert_deprecated(/:bomb:/) { deprecated_object.to_s }
+  end
+
   def test_nil_behavior_is_ignored
     ActiveSupport::Deprecation.behavior = nil
     assert_deprecated(/foo=nil/) { @dtc.partially }
@@ -91,6 +96,19 @@ class DeprecationTest < ActiveSupport::TestCase
     @dtc.partially
     assert_match(/foo=nil/, @a)
     assert_match(/foo=nil/, @b)
+  end
+
+  def test_raise_behaviour
+    ActiveSupport::Deprecation.behavior = :raise
+
+    message   = 'Revise this deprecated stuff now!'
+    callstack = %w(foo bar baz)
+
+    e = assert_raise ActiveSupport::DeprecationException do
+      ActiveSupport::Deprecation.behavior.first.call(message, callstack)
+    end
+    assert_equal message, e.message
+    assert_equal callstack, e.backtrace
   end
 
   def test_default_stderr_behavior
@@ -119,9 +137,10 @@ class DeprecationTest < ActiveSupport::TestCase
     ActiveSupport::Deprecation.behavior = :silence
     behavior = ActiveSupport::Deprecation.behavior.first
 
-    assert_blank capture(:stderr) {
+    stderr_output = capture(:stderr) {
       assert_nil behavior.call('Some error!', ['call stack!'])
     }
+    assert stderr_output.blank?
   end
 
   def test_deprecated_instance_variable_proxy
@@ -138,6 +157,7 @@ class DeprecationTest < ActiveSupport::TestCase
   def test_deprecated_constant_proxy
     assert_not_deprecated { Deprecatee::B::C }
     assert_deprecated('Deprecatee::A') { assert_equal Deprecatee::B::C, Deprecatee::A }
+    assert_not_deprecated { assert_equal Deprecatee::B::C.class, Deprecatee::A.class }
   end
 
   def test_assert_deprecation_without_match
@@ -151,7 +171,7 @@ class DeprecationTest < ActiveSupport::TestCase
       ActiveSupport::Deprecation.warn 'abc'
       ActiveSupport::Deprecation.warn 'def'
     end
-  rescue MiniTest::Assertion
+  rescue Minitest::Assertion
     flunk 'assert_deprecated should match any warning in block, not just the last one'
   end
 
@@ -254,10 +274,10 @@ class DeprecationTest < ActiveSupport::TestCase
       klass::OLD.to_s
     end
   end
-  
+
   def test_deprecated_instance_variable_with_instance_deprecator
     deprecator = deprecator_with_messages
-    
+
     klass = Class.new() do
       def initialize(deprecator)
         @request = ActiveSupport::Deprecation::DeprecatedInstanceVariableProxy.new(self, :request, :@request, deprecator)

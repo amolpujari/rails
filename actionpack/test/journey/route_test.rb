@@ -2,22 +2,22 @@ require 'abstract_unit'
 
 module ActionDispatch
   module Journey
-    class TestRoute < MiniTest::Unit::TestCase
+    class TestRoute < ActiveSupport::TestCase
       def test_initialize
         app      = Object.new
         path     = Path::Pattern.new '/:controller(/:action(/:id(.:format)))'
-        defaults = Object.new
+        defaults = {}
         route    = Route.new("name", app, path, {}, defaults)
 
         assert_equal app, route.app
         assert_equal path, route.path
-        assert_equal defaults, route.defaults
+        assert_same  defaults, route.defaults
       end
 
       def test_route_adds_itself_as_memo
         app      = Object.new
         path     = Path::Pattern.new '/:controller(/:action(/:id(.:format)))'
-        defaults = Object.new
+        defaults = {}
         route    = Route.new("name", app, path, {}, defaults)
 
         route.ast.grep(Nodes::Terminal).each do |node|
@@ -82,17 +82,20 @@ module ActionDispatch
       end
 
       def test_score
+        constraints = {:required_defaults => [:controller, :action]}
+        defaults = {:controller=>"pages", :action=>"show"}
+
         path = Path::Pattern.new "/page/:id(/:action)(.:format)"
-        specific = Route.new "name", nil, path, {}, {:controller=>"pages", :action=>"show"}
+        specific = Route.new "name", nil, path, constraints, defaults
 
         path = Path::Pattern.new "/:controller(/:action(/:id))(.:format)"
-        generic = Route.new "name", nil, path, {}
+        generic = Route.new "name", nil, path, constraints
 
         knowledge = {:id=>20, :controller=>"pages", :action=>"show"}
 
         routes = [specific, generic]
 
-        refute_equal specific.score(knowledge), generic.score(knowledge)
+        assert_not_equal specific.score(knowledge), generic.score(knowledge)
 
         found = routes.sort_by { |r| r.score(knowledge) }.last
 
