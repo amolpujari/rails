@@ -111,6 +111,50 @@ in your application, you can add an initializer file with the following content:
 This would transparently migrate your existing `Marshal`-serialized cookies into the
 new `JSON`-based format.
 
+When using the `:json` or `:hybrid` serializer, you should beware that not all
+Ruby objects can be serialized as JSON. For example, `Date` and `Time` objects
+will be serialized as strings, and `Hash`es will have their keys stringified.
+
+```ruby
+class CookiesController < ApplicationController
+  def set_cookie
+    cookies.encrypted[:expiration_date] = Date.tomorrow # => Thu, 20 Mar 2014
+    redirect_to action: 'read_cookie'
+  end
+
+  def read_cookie
+    cookies.encrypted[:expiration_date] # => "2014-03-20"
+  end
+end
+```
+
+It's advisable that you only store simple data (strings and numbers) in cookies.
+If you have to store complex objects, you would need to handle the conversion
+manually when reading the values on subsequent requests.
+
+If you use the cookie session store, this would apply to the `session` and
+`flash` hash as well.
+
+### Flash structure changes
+
+Flash message keys are
+[normalized to strings](https://github.com/rails/rails/commit/a668beffd64106a1e1fedb71cc25eaaa11baf0c1). They
+can still be accessed using either symbols or strings. Lopping through the flash
+will always yield string keys:
+
+```ruby
+flash["string"] = "a string"
+flash[:symbol] = "a symbol"
+
+# Rails < 4.1
+flash.keys # => ["string", :symbol]
+
+# Rails >= 4.1
+flash.keys # => ["string", "symbol"]
+```
+
+Make sure you are comparing Flash message keys against strings.
+
 ### Changes in JSON handling
 
 There are a few major changes related to JSON handling in Rails 4.1.

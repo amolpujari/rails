@@ -49,6 +49,8 @@ module ActiveRecord
             Arel::Nodes::Not.new(rel)
           end
         end
+
+        @scope.references!(PredicateBuilder.references(opts)) if Hash === opts
         @scope.where_values += where_value
         @scope
       end
@@ -275,15 +277,6 @@ module ActiveRecord
 
     # Allows to specify an order attribute:
     #
-    #   User.order('name')
-    #   => SELECT "users".* FROM "users" ORDER BY name
-    #
-    #   User.order('name DESC')
-    #   => SELECT "users".* FROM "users" ORDER BY name DESC
-    #
-    #   User.order('name DESC, email')
-    #   => SELECT "users".* FROM "users" ORDER BY name DESC, email
-    #
     #   User.order(:name)
     #   => SELECT "users".* FROM "users" ORDER BY "users"."name" ASC
     #
@@ -292,6 +285,15 @@ module ActiveRecord
     #
     #   User.order(:name, email: :desc)
     #   => SELECT "users".* FROM "users" ORDER BY "users"."name" ASC, "users"."email" DESC
+    #
+    #   User.order('name')
+    #   => SELECT "users".* FROM "users" ORDER BY name
+    #
+    #   User.order('name DESC')
+    #   => SELECT "users".* FROM "users" ORDER BY name DESC
+    #
+    #   User.order('name DESC, email')
+    #   => SELECT "users".* FROM "users" ORDER BY name DESC, email
     def order(*args)
       check_if_method_has_arguments!(:order, args)
       spawn.order!(*args)
@@ -1030,10 +1032,15 @@ module ActiveRecord
       arel.order(*orders) unless orders.empty?
     end
 
+    VALID_DIRECTIONS = [:asc, :desc, :ASC, :DESC,
+                        'asc', 'desc', 'ASC', 'DESC'] # :nodoc:
+
     def validate_order_args(args)
-      args.grep(Hash) do |h|
-        unless (h.values - [:asc, :desc]).empty?
-          raise ArgumentError, 'Direction should be :asc or :desc'
+      args.each do |arg|
+        next unless arg.is_a?(Hash)
+        arg.each do |_key, value|
+          raise ArgumentError, "Direction \"#{value}\" is invalid. Valid " \
+                               "directions are: #{VALID_DIRECTIONS.inspect}" unless VALID_DIRECTIONS.include?(value)
         end
       end
     end
@@ -1055,7 +1062,7 @@ module ActiveRecord
         when Hash
           arg.map { |field, dir|
             field = klass.attribute_alias(field) if klass.attribute_alias?(field)
-            table[field].send(dir)
+            table[field].send(dir.downcase)
           }
         else
           arg
